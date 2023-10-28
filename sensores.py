@@ -13,6 +13,42 @@ mensagens_collection = db["mensagens"]
 mqtt_broker = "localhost"
 mqtt_port = 1883
 mqtt_topic_control = "casa/controle"
+mqtt_username = ""
+mqtt_password = ""
+
+# Flag para indicar se a conexão MQTT está ativa
+mqtt_connected = False
+
+# Função para lidar com a conexão ao servidor MQTT
+def on_connect(client, userdata, flags, rc):
+    global mqtt_connected
+    mqtt_connected = True
+    print("Conectado ao MQTT Broker com código de resultado: " + str(rc))
+    client.subscribe(mqtt_topic_control)
+
+# Função para lidar com a mensagem recebida
+def on_message(client, userdata, message):
+    payload = message.payload.decode()
+    print("Mensagem recebida: " + payload)
+    controlar_dispositivos(payload)
+
+# Função para lidar com a conexão perdida
+def on_disconnect(client, userdata, rc):
+    global mqtt_connected
+    mqtt_connected = False
+    print("Conexão MQTT perdida. Tentando reconectar...")
+    
+    # Tente reconectar ao broker MQTT
+    client.reconnect()
+
+# Função para verificar se a conexão MQTT está ativa e reconectar se necessário
+def verificar_conexao_mqtt():
+    global mqtt_connected
+    if not mqtt_connected:
+        print("Conexão MQTT perdida. Tentando reconectar...")
+        mqtt_client.reconnect()
+    # Agendar a próxima verificação após 20 segundos 
+    root.after(20000, verificar_conexao_mqtt)
 
 # Função para lidar com a conexão ao servidor MQTT
 def on_connect(client, userdata, flags, rc):
@@ -162,6 +198,16 @@ def verificar_sensor_movimento():
 
 # Iniciar a verificação do sensor de movimento
 verificar_sensor_movimento()
+
+# Configuração do cliente MQTT com segurança
+mqtt_client = mqtt.Client(client_id="cliente_id")
+mqtt_client.on_connect = on_connect
+mqtt_client.on_message = on_message
+mqtt_client.on_disconnect = on_disconnect
+
+# Definir credenciais de segurança
+mqtt_client.username_pw_set(username=mqtt_username, password=mqtt_password)
+
 
 # Conectar ao Broker MQTT
 mqtt_client.connect(mqtt_broker, mqtt_port, 60)
