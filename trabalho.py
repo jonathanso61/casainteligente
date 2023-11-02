@@ -1,13 +1,28 @@
+import time
 import paho.mqtt.client as mqtt
 from pymongo import MongoClient
 import tkinter as tk
 import random
+import multiprocessing
+import mysql.connector
 
 # Conectar ao MongoDB
 mongo_client = MongoClient("mongodb://localhost:27017/")
 db = mongo_client["casa"]
 usuarios_collection = db["usuarios"]
 mensagens_collection = db["mensagens"]
+
+# Conectar ao MySQL
+mysql_connection = mysql.connector.connect(
+    host="localhost",
+    user="root",
+    password="123456",
+    database="backupcasa"
+)
+mysql_cursor = mysql_connection.cursor()
+
+# Acessar a coleção 'usuarios' no MongoDB
+mongo_collection = db["usuarios"]
 
 # Configurações MQTT
 mqtt_broker = "localhost"
@@ -38,14 +53,14 @@ def verificar_conexao_mqtt():
     if not mqtt_connected:
         print("Verificando conexão com o servidor MQTT...")
         mqtt_client.reconnect()
-    # Agendar a próxima verificação após 20 segundos 
-    root.after(20000, verificar_conexao_mqtt)
+    # Agendar a próxima verificação após 50 segundos 
+    root.after(100000, verificar_conexao_mqtt)
 
 # Função para lidar com a conexão perdida
 def on_disconnect(client, userdata, rc):
     global mqtt_connected
     mqtt_connected = False
-    print("Verificando conexão e concetando...")
+    print("Verificando conexão e conectando...")
     
     # Tente reconectar ao broker MQTT
     client.reconnect()
@@ -66,6 +81,13 @@ def conectar():
     nome_usuario = entrada_nome.get()
     print(f"Usuário {nome_usuario} conectado ao sistema.")
     usuarios_collection.insert_one({"nome": nome_usuario})
+
+    # Consultar dados da coleção 'usuarios'
+    mongo_data = mongo_collection.find()
+    for document in mongo_data:
+        # Obter o nome do usuário do documento MongoDB
+        nome_usuario = document.get("nome")
+        mysql_cursor.execute("INSERT INTO backup (NOME) VALUES (%s)",(nome_usuario,))
 
 # Função para lidar com os botões de ligar/desligar
 def controlar_dispositivos(acao):
@@ -180,15 +202,15 @@ def verificar_sensor_movimento():
     global label_sensor
     fps = random.randint(1, 10)  # Gera aleatoriamente o número de "fps" da câmera
     if fps > 1:
-        mensagem_sensor = "Sensor de Movimento da Câmera: Funcionando"
+        mensagem_sensor = "Ativo"
     else:
-        mensagem_sensor = "Sensor de Movimento da Câmera: Não Funcionando"
+        mensagem_sensor = "Desabilitado"
     
     # Atualiza o texto na interface gráfica com o status do sensor
     label_sensor.config(text=mensagem_sensor)
     
-    # Agenda a próxima verificação do sensor após 15 segundos
-    root.after(15000, verificar_sensor_movimento)
+    # Agenda a próxima verificação do sensor após 50 segundos
+    root.after(100000, verificar_sensor_movimento)
 
     # Publica uma mensagem MQTT com o status e o valor de FPS
     mqtt_client.publish(mqtt_topic_control, f"Sensor de Movimento: {mensagem_sensor}, FPS: {fps}")
@@ -208,6 +230,25 @@ mqtt_client.on_disconnect = on_disconnect
 # Definir credenciais de segurança
 mqtt_client.username_pw_set(username=mqtt_username, password=mqtt_password)
 
+# Função para o processo do controlador
+def controlador_processo():
+    global mqtt_client
+    while True:
+        # Verificar a conexão MQTT
+        mqtt_client.loop(10.0)  # Valor de timeout (em segundos)
+        
+        # Verificar o sensor de movimento
+        verificar_sensor_movimento()
+        
+        # Aguarde um curto período antes de verificar novamente
+        time.sleep(10)
+
+# Inicializar o cliente MQTT e definir os callbacks
+mqtt_client = mqtt.Client(client_id="cliente_id")
+mqtt_client.on_connect = on_connect
+mqtt_client.on_message = on_message
+mqtt_client.on_disconnect = on_disconnect
+mqtt_client.username_pw_set(username=mqtt_username, password=mqtt_password)
 
 # Conectar ao Broker MQTT
 mqtt_client.connect(mqtt_broker, mqtt_port, 60)
@@ -215,7 +256,12 @@ mqtt_client.connect(mqtt_broker, mqtt_port, 60)
 # Loop MQTT
 mqtt_client.loop_start()
 
-# Iniciar a interface gráfica
-root.mainloop()
+# Iniciar o processo do controlador
+if __name__ == "__main__":
+    controlador = multiprocessing.Process(target=controlador_processo)
+    controlador.start()
+
+    # Iniciar a interface gráfica
+    root.mainloop()
 
 
